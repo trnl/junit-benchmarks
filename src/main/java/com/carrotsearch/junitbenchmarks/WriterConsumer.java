@@ -23,13 +23,14 @@ public final class WriterConsumer implements IResultsConsumer
     public void accept(Result result) throws IOException
     {
         w.write(String.format(Locale.ENGLISH,
-            "%s: [measured %d out of %d rounds, %s]\n" +
+            "%s: [measured %d out of %d rounds, %s%s]\n" +
             " round: %s, round.block: %s, round.gc: %s, GC.calls: %d, GC.time: %.2f," +
             " time.total: %.2f, time.warmup: %.2f, time.bench: %.2f\n",
             result.getShortTestClassName() + "." + result.getTestMethodName(),
             result.benchmarkRounds, 
             result.benchmarkRounds + result.warmupRounds, 
             concurrencyToText(result),
+            iterationsToText(result),
             result.roundAverage.toString(),
             result.blockedAverage.toString(),
             result.gcAverage.toString(), 
@@ -58,6 +59,12 @@ public final class WriterConsumer implements IResultsConsumer
 
         return "threads: " + result.concurrency
             + " (physical processors: " + Runtime.getRuntime().availableProcessors() + ")";
+    }
+
+    private String iterationsToText(Result result)
+    {
+        if (result.iterations > 0) return  ", iterations: " + result.iterations;
+        else return "";
     }
 
     /**

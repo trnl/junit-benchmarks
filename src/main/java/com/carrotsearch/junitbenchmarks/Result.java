@@ -17,6 +17,7 @@ public final class Result
     public final Average blockedAverage;
     public final Average gcAverage;
     public final GCSnapshot gcInfo;
+    public final long iterations;
 
     /**
      * Concurrency level (number of used threads).
@@ -45,7 +46,7 @@ public final class Result
         Average blockedAverage,
         Average gcAverage,
         GCSnapshot gcInfo,
-        int concurrency)
+        int concurrency, long iterations)
     {
         this.description = description;
         this.benchmarkRounds = benchmarkRounds;
@@ -57,6 +58,7 @@ public final class Result
         this.gcAverage = gcAverage;
         this.gcInfo = gcInfo;
         this.concurrency = concurrency;
+        this.iterations = iterations;
     }
 
     /**

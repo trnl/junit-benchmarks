@@ -1,6 +1,7 @@
 package com.carrotsearch.junitbenchmarks;
 
-import static com.carrotsearch.junitbenchmarks.BenchmarkOptionsSystemProperties.*;
+import org.junit.runner.Description;
+import org.junit.runners.model.Statement;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
@@ -12,8 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 
-import org.junit.runner.Description;
-import org.junit.runners.model.Statement;
+import static com.carrotsearch.junitbenchmarks.BenchmarkOptionsSystemProperties.*;
 
 /**
  * Benchmark evaluator statement.
@@ -30,16 +30,17 @@ final class BenchmarkStatement extends Statement
 
         final protected int warmupRounds;
         final protected int benchmarkRounds;
-        final protected int totalRounds;
+        final protected long estimatedTime;
 
+        final protected int totalRounds;
         final protected Clock clock;
         final protected ThreadMXBean threadMXBean;
-        final protected Map<Long,Long> threadBlockedTimes;
+        final protected Map<Long, Long> threadBlockedTimes;
 
         protected long warmupTime;
         protected long benchmarkTime;
 
-        protected BaseEvaluator(int warmupRounds, int benchmarkRounds, int totalRounds, Clock clock)
+        protected BaseEvaluator(int warmupRounds, int benchmarkRounds, int totalRounds, Clock clock, long estimatedTime)
         {
             super();
             this.warmupRounds = warmupRounds;
@@ -47,6 +48,7 @@ final class BenchmarkStatement extends Statement
             this.totalRounds = totalRounds;
             this.clock = clock;
             this.results = new ArrayList<SingleResult>(totalRounds);
+            this.estimatedTime = estimatedTime;
 
             this.threadMXBean = ManagementFactory.getThreadMXBean();
             this.threadMXBean.setThreadContentionMonitoringEnabled(true);
@@ -82,7 +84,7 @@ final class BenchmarkStatement extends Statement
                 final long roundBlockedTime = threadBlockedTimes.containsKey(threadId)
                         ? threadBlockedTime - threadBlockedTimes.get(threadId)
                         : threadBlockedTime;
-                threadBlockedTimes.put(threadId,threadBlockedTime);
+                threadBlockedTimes.put(threadId, threadBlockedTime);
 
                 return new SingleResult(startTime, afterGC, endTime, roundBlockedTime);
             } catch (Throwable t)
@@ -94,10 +96,10 @@ final class BenchmarkStatement extends Statement
         protected Result computeResult()
         {
             final Statistics stats = Statistics.from(
-                results.subList(warmupRounds, totalRounds));
+                    results.subList(warmupRounds, totalRounds));
 
             return new Result(description, benchmarkRounds, warmupRounds, warmupTime,
-                benchmarkTime, stats.evaluation, stats.blocked, stats.gc, gcSnapshot, 1);
+                    benchmarkTime, stats.evaluation, stats.blocked, stats.gc, gcSnapshot, 1, Globals.ITERATIONS);
         }
     }
 
@@ -106,14 +108,15 @@ final class BenchmarkStatement extends Statement
      */
     private final class SequentialEvaluator extends BaseEvaluator
     {
-        SequentialEvaluator(int warmupRounds, int benchmarkRounds, int totalRounds, Clock clock)
+        SequentialEvaluator(int warmupRounds, int benchmarkRounds, int totalRounds, Clock clock, long estimatedTime)
         {
-            super(warmupRounds, benchmarkRounds, totalRounds, clock);
+            super(warmupRounds, benchmarkRounds, totalRounds, clock, estimatedTime);
         }
 
         @Override
         public Result evaluate() throws Throwable
         {
+            estimateIterations(estimatedTime,1);
             warmupTime = clock.time();
             benchmarkTime = 0;
             for (int i = 0; i < totalRounds; i++)
@@ -159,9 +162,9 @@ final class BenchmarkStatement extends Statement
 
 
         ConcurrentEvaluator(int warmupRounds, int benchmarkRounds, int totalRounds,
-                            int concurrency, Clock clock)
+                            int concurrency, Clock clock, long estimatedTime)
         {
-            super(warmupRounds, benchmarkRounds, totalRounds, clock);
+            super(warmupRounds, benchmarkRounds, totalRounds, clock, estimatedTime);
 
             this.concurrency = concurrency;
             this.latch = new CountDownLatch(1);
@@ -195,10 +198,11 @@ final class BenchmarkStatement extends Statement
         @Override
         public Result evaluate() throws Throwable
         {
+            estimateIterations(estimatedTime,concurrency);
             // Obtain ThreadPoolExecutor (new instance on each test method for now)
             ExecutorService executor = getExecutor(concurrency, totalRounds);
             CompletionService<SingleResult> completed = new ExecutorCompletionService<SingleResult>(
-                executor);
+                    executor);
 
             for (int i = 0; i < totalRounds; i++)
             {
@@ -219,14 +223,12 @@ final class BenchmarkStatement extends Statement
 
                 benchmarkTime = clock.time() - benchmarkTime;
                 return computeResult();
-            }
-            catch (ExecutionException e)
+            } catch (ExecutionException e)
             {
                 // Unwrap the Throwable thrown by the tested method.
                 e.printStackTrace();
                 throw e.getCause().getCause();
-            }
-            finally
+            } finally
             {
                 // Assure proper executor cleanup either on test failure or an successful completion
                 cleanupExecutor(executor);
@@ -257,7 +259,7 @@ final class BenchmarkStatement extends Statement
      * ignored and defaults (or globals passed via system properties) are used.
      */
     private boolean ignoreAnnotationOptions = Boolean
-        .getBoolean(IGNORE_ANNOTATION_OPTIONS_PROPERTY);
+            .getBoolean(IGNORE_ANNOTATION_OPTIONS_PROPERTY);
 
     /**
      * Disable all forced garbage collector calls.
@@ -266,14 +268,15 @@ final class BenchmarkStatement extends Statement
 
     private final Description description;
     private final BenchmarkOptions options;
-    private final IResultsConsumer [] consumers;
+    private final IResultsConsumer[] consumers;
 
     private final Statement base;
 
 
     /* */
     public BenchmarkStatement(Statement base, Description description,
-            IResultsConsumer[] consumers) {
+                              IResultsConsumer[] consumers)
+    {
         this.base = base;
         this.description = description;
         this.consumers = consumers;
@@ -289,7 +292,8 @@ final class BenchmarkStatement extends Statement
     }
 
     /* */
-    private BenchmarkOptions resolveOptions(Description description) {
+    private BenchmarkOptions resolveOptions(Description description)
+    {
         // Method-level or Class-level
         BenchmarkOptions options = description.getAnnotation(BenchmarkOptions.class);
         if (options != null) return options;
@@ -298,9 +302,8 @@ final class BenchmarkStatement extends Statement
         try
         {
             return getClass().getDeclaredMethod("defaultOptions").getAnnotation(
-                BenchmarkOptions.class);
-        }
-        catch (Exception e)
+                    BenchmarkOptions.class);
+        } catch (Exception e)
         {
             throw new RuntimeException(e);
         }
@@ -311,36 +314,39 @@ final class BenchmarkStatement extends Statement
     public void evaluate() throws Throwable
     {
         final int warmupRounds = getIntOption(options.warmupRounds(),
-            WARMUP_ROUNDS_PROPERTY, DEFAULT_WARMUP_ROUNDS);
+                WARMUP_ROUNDS_PROPERTY, DEFAULT_WARMUP_ROUNDS);
 
         final int benchmarkRounds = getIntOption(options.benchmarkRounds(),
-            BENCHMARK_ROUNDS_PROPERTY, DEFAULT_BENCHMARK_ROUNDS);
+                BENCHMARK_ROUNDS_PROPERTY, DEFAULT_BENCHMARK_ROUNDS);
 
         final int concurrency = getIntOption(options.concurrency(), CONCURRENCY_PROPERTY,
-            BenchmarkOptions.CONCURRENCY_SEQUENTIAL);
+                BenchmarkOptions.CONCURRENCY_SEQUENTIAL);
+
+        final long estimatedTime = options.estimatedTime();
 
         final int totalRounds = warmupRounds + benchmarkRounds;
 
         final BaseEvaluator evaluator;
+
+
         if (concurrency == BenchmarkOptions.CONCURRENCY_SEQUENTIAL)
         {
-            evaluator = new SequentialEvaluator(warmupRounds, benchmarkRounds, totalRounds, options.clock());
-        }
-        else
+            evaluator = new SequentialEvaluator(warmupRounds, benchmarkRounds, totalRounds, options.clock(), estimatedTime);
+        } else
         {
             /*
              * Just don't allow call GC during concurrent execution.
              */
             if (options.callgc())
                 throw new IllegalArgumentException("Concurrent benchmark execution must be"
-                    + " combined ignoregc=\"true\".");
+                        + " combined ignoregc=\"true\".");
 
             int threads = (concurrency == BenchmarkOptions.CONCURRENCY_AVAILABLE_CORES
                     ? Runtime.getRuntime().availableProcessors()
                     : concurrency);
 
             evaluator = new ConcurrentEvaluator(
-                warmupRounds, benchmarkRounds, totalRounds, threads, options.clock());
+                    warmupRounds, benchmarkRounds, totalRounds, threads, options.clock(), estimatedTime);
         }
 
         final Result result = evaluator.evaluate();
@@ -365,6 +371,26 @@ final class BenchmarkStatement extends Statement
         System.gc();
         System.gc();
         Thread.yield();
+    }
+
+    private void estimateIterations(long estimatedTime,int concurrency) throws Throwable
+    {
+        Clock clock = Clock.NANO_TIME;
+        Globals.ITERATIONS = 1;
+        long start, end, resultTime, attempts = 0;
+        if (estimatedTime == -1) return;
+
+        do
+        {
+            start = clock.time();
+            base.evaluate();
+            end = clock.time();
+            resultTime = end - start;
+            if (resultTime == 0) resultTime = 1;
+            Globals.ITERATIONS *= Math.ceil(estimatedTime / Double.valueOf(resultTime));
+        } while ((estimatedTime > resultTime ) && (attempts++ < 10));
+
+        if (concurrency > 1 ) Globals.ITERATIONS /= Math.sqrt(concurrency);
     }
 
     /**

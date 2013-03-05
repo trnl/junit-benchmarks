@@ -62,4 +62,10 @@ public @interface BenchmarkOptions
      *
      */
     Clock clock() default Clock.REAL_TIME;
+
+
+    /**
+     * Sets the number of desired time for a benchmark.
+     */
+    int estimatedTime() default -1;
 }
